@@ -40,6 +40,7 @@ back is parsed exactly the same way as before (BeautifulSoup, see
 `parse_calendar`) - only *how* the page is fetched changed.
 """
 
+import csv
 import json
 import os
 import re
@@ -123,6 +124,13 @@ TARGET_MONTHS = month_range(_today.year, _today.month, END_MONTH[0], END_MONTH[1
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 STATE_FILE = Path(__file__).parent / "state.json"
 LOG_FILE = Path(__file__).parent / "logs" / "hpdsp_log.md"
+
+# 2026-09-25: added alongside LOG_FILE, per your request for something you
+# can actually compare day-to-day - one row per (run, date) instead of a
+# wall of text, so it opens cleanly in Excel/Google Sheets for
+# filtering/pivoting (e.g. "show me every check for 2026-09-25").
+HISTORY_CSV_FILE = Path(__file__).parent / "logs" / "history.csv"
+HISTORY_CSV_FIELDS = ["checked_at", "target_label", "date", "status", "price", "remaining"]
 
 # Thailand time (UTC+7, no DST) - used only for the timestamp shown in the
 # Discord report header, so "when was this checked" reads in your own
@@ -236,10 +244,15 @@ def fetch_month_html(target: dict, year: int, month: int) -> str:
 
 
 def _parse_one_table(table, year: int, month: int) -> dict:
-    """Parse a single <table class="table_calender"> element into the same
-    {"opened", "available"} shape parse_calendar() returns."""
+    """Parse a single <table class="table_calender"> element.
+
+    Returns {"opened", "available", "all_days"} - "all_days" (2026-09-25,
+    added for the new CSV history log) lists EVERY date cell with real data
+    on it, not just bookable ones, so day-to-day comparisons can also see
+    "sold out" vs "no data yet" instead of only "available"."""
     any_data = False
     available = []
+    all_days = []
 
     for td in table.find_all("td"):
         classes = td.get("class") or []
@@ -250,27 +263,39 @@ def _parse_one_table(table, year: int, month: int) -> dict:
         if not day_text.isdigit():
             continue
         day = int(day_text)
+        date_str = f"{year:04d}-{month:02d}-{day:02d}"
 
         price_span = td.find("span", class_="table_calender-price")
         price_text = price_span.get_text(strip=True) if price_span else ""
+        price_digits = re.sub(r"[^\d]", "", price_text)
+        has_real_price = bool(price_text) and "application period" not in price_text.lower()
 
-        if price_text and "application period" not in price_text.lower():
+        if has_real_price:
             any_data = True
 
         if "table_calender-enable" in classes:
             any_data = True
             remaining_span = td.find("span", class_="table_calender-rest_number")
+            remaining = remaining_span.get_text(strip=True) if remaining_span else ""
             available.append(
+                {"date": date_str, "price": price_digits, "remaining": remaining}
+            )
+            all_days.append(
                 {
-                    "date": f"{year:04d}-{month:02d}-{day:02d}",
-                    "price": re.sub(r"[^\d]", "", price_text),
-                    "remaining": remaining_span.get_text(strip=True)
-                    if remaining_span
-                    else "",
+                    "date": date_str,
+                    "status": "available",
+                    "price": price_digits,
+                    "remaining": remaining,
                 }
             )
+        elif "table_calender-reserved" in classes and has_real_price:
+            all_days.append(
+                {"date": date_str, "status": "sold_out", "price": price_digits, "remaining": "0"}
+            )
+        # "table_calender-disable" cells (past dates, or padding from the
+        # adjacent month) carry no real availability info and aren't logged.
 
-    return {"opened": any_data, "available": available}
+    return {"opened": any_data, "available": available, "all_days": all_days}
 
 
 def parse_calendar(html: str, year: int, month: int) -> dict:
@@ -302,7 +327,7 @@ def parse_calendar(html: str, year: int, month: int) -> dict:
     )
 
     if not tables:
-        return {"opened": False, "available": []}
+        return {"opened": False, "available": [], "all_days": []}
 
     parsed = [_parse_one_table(t, year, month) for t in tables]
     for i, p in enumerate(parsed):
@@ -343,10 +368,40 @@ def log_line(text: str) -> None:
         f.write(f"- `{stamp}` {text}\n")
 
 
+def log_history_csv(checked_at: str, target_label: str, day_entries: list) -> None:
+    """Append one CSV row per date this run actually saw data for (see
+    _parse_one_table's "all_days") - "available" or "sold_out" rows only,
+    never a row for a date with no data yet. Kept separate from
+    hpdsp_log.md (2026-09-25, per your request): a flat table with one
+    value per row is what opens cleanly in Excel/Google Sheets for
+    filtering, sorting, or pivoting by date - e.g. select every row for
+    2026-09-25 across every run to see exactly when it went from
+    "available" to "sold_out", or the other way round."""
+    if not day_entries:
+        return
+    HISTORY_CSV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not HISTORY_CSV_FILE.exists()
+    with HISTORY_CSV_FILE.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=HISTORY_CSV_FIELDS)
+        if is_new:
+            writer.writeheader()
+        for entry in sorted(day_entries, key=lambda e: e["date"]):
+            writer.writerow(
+                {
+                    "checked_at": checked_at,
+                    "target_label": target_label,
+                    "date": entry["date"],
+                    "status": entry["status"],
+                    "price": entry["price"],
+                    "remaining": entry["remaining"],
+                }
+            )
+
+
 TARGETS_BY_LABEL = {t["label"]: t for t in TARGETS}
 
 
-def format_report(results: dict) -> str:
+def format_report(results: dict, checked_at: str) -> str:
     """
     results: {label: {(year, month): {"opened": bool, "available": [...]}}}
 
@@ -372,7 +427,6 @@ def format_report(results: dict) -> str:
     request.
     """
     multi_target = len(results) > 1
-    checked_at = datetime.now(BANGKOK_TZ).strftime("%d/%m/%y %H:%M:%S")
     lines = [f"*** hpdsp ({checked_at}) ***"]
 
     for label, months in results.items():
@@ -414,7 +468,8 @@ def notify_discord(content: str) -> None:
 def main() -> int:
     state = load_state()
     now = datetime.now(timezone.utc).isoformat()
-    results = {}          # label -> {(year, month): {"opened", "available"}}
+    checked_at = datetime.now(BANGKOK_TZ).strftime("%d/%m/%y %H:%M:%S")
+    results = {}          # label -> {(year, month): {"opened", "available", "all_days"}}
     just_opened = []      # for the log only - months that opened since last run
     checked_summaries = []
 
@@ -439,11 +494,13 @@ def main() -> int:
                     results[label][(year, month)] = {
                         "opened": prev["opened"],
                         "available": [],
+                        "all_days": [],
                     }
                     continue
 
                 result = parse_calendar(html, year, month)
                 results[label][(year, month)] = result
+                log_history_csv(checked_at, label, result["all_days"])
 
                 if result["opened"] and not prev["opened"]:
                     just_opened.append(f"{label} {month_key}")
@@ -459,7 +516,7 @@ def main() -> int:
 
     save_state(state)
 
-    report = format_report(results)
+    report = format_report(results, checked_at)
 
     # Log a heartbeat every run (proof it ran + what it saw), plus a
     # separate note whenever a month transitions from closed to open.
