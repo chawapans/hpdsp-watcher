@@ -44,7 +44,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests  # still used for the Discord webhook POST, not for hpdsp.net
@@ -124,6 +124,12 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 STATE_FILE = Path(__file__).parent / "state.json"
 LOG_FILE = Path(__file__).parent / "logs" / "hpdsp_log.md"
 
+# Thailand time (UTC+7, no DST) - used only for the timestamp shown in the
+# Discord report header, so "when was this checked" reads in your own
+# clock instead of GitHub Actions' UTC. A fixed offset (not zoneinfo) so
+# this doesn't depend on the runner having a full tz database installed.
+BANGKOK_TZ = timezone(timedelta(hours=7))
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -141,6 +147,35 @@ def build_url(target: dict, year: int, month: int) -> str:
     params["calMonth"] = f"{month:02d}"
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return f"{BASE_URL}?{query}"
+
+
+# Link included in every Discord report so you can jump straight to the
+# room's plan/booking page (English version - note "/en/" in the path,
+# same as BASE_URL above) instead of just seeing numbers. This is the
+# HWW3101 "plan detail" screen (the one you land on to actually start a
+# reservation), not the HWW3201 calendar-only screen the checker itself
+# fetches - built from the same planCd/roomTypeCd as its TARGETS entry.
+BOOKING_BASE_URL = "https://www.hpdsp.net/tominoko/en/hw/hwp3200/hww3101init.do"
+BOOKING_COMMON_PARAMS = {
+    "stayYear": "",
+    "stayMonth": "",
+    "stayDay": "",
+    "roomCount": "1",
+    "dateUndecided": "1",
+    "adultNum": "2",
+    "roomCrack": "200000",
+    "yadNo": "310563",
+    "screenId": "HWW3101",
+    "planListNumPlan": "5_2_0",
+}
+
+
+def build_booking_url(target: dict) -> str:
+    params = dict(BOOKING_COMMON_PARAMS)
+    params["planCd"] = target["planCd"]
+    params["roomTypeCd"] = target["roomTypeCd"]
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    return f"{BOOKING_BASE_URL}?{query}"
 
 
 # A single headless-Chromium instance is launched once per script run (see
@@ -308,13 +343,18 @@ def log_line(text: str) -> None:
         f.write(f"- `{stamp}` {text}\n")
 
 
+TARGETS_BY_LABEL = {t["label"]: t for t in TARGETS}
+
+
 def format_report(results: dict) -> str:
     """
     results: {label: {(year, month): {"opened": bool, "available": [...]}}}
 
     Builds the Thai month-by-month report you asked for, e.g.:
 
-        *** hpdsp ***
+        *** hpdsp (25/09/26 15:08:32) ***
+        Book: https://www.hpdsp.net/tominoko/en/hw/hwp3200/hww3101init.do?...
+
         September 2026
         วันที่ 16 ว่าง 6 ห้อง
         วันที่ 27 ว่าง 2 ห้อง
@@ -323,13 +363,24 @@ def format_report(results: dict) -> str:
 
         January 2027
         -- ยังไม่เปิดจอง --
+
+    2026-09-25: added the "Book:" link (English-language plan page for the
+    exact room, so a click goes straight to actually reserving it) right
+    under each target's header. Also added the "(DD/MM/YY HH:MM:SS)"
+    timestamp in the header, in Thailand time, so you can tell at a glance
+    when a given Discord message was actually checked - both per your
+    request.
     """
     multi_target = len(results) > 1
-    lines = ["*** hpdsp ***"]
+    checked_at = datetime.now(BANGKOK_TZ).strftime("%d/%m/%y %H:%M:%S")
+    lines = [f"*** hpdsp ({checked_at}) ***"]
 
     for label, months in results.items():
         if multi_target:
             lines.append(f"\n__{label}__")
+        target = TARGETS_BY_LABEL.get(label)
+        if target:
+            lines.append(f"Book: {build_booking_url(target)}")
         for (year, month), result in months.items():
             month_name = datetime(year, month, 1).strftime("%B %Y")
             lines.append(f"\n{month_name}")
