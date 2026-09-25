@@ -10,8 +10,8 @@ report to Discord every run (2026-09-25 change, per your request - this is
 no longer diff/event-based; every run posts the complete current picture,
 whether or not anything changed since last time).
 
-Runs standalone (no browser, no Claude, no desktop app needed) - just Python
-+ requests. Designed to be triggered on a schedule by GitHub Actions (see
+Runs standalone (no Claude, no desktop app needed) - just Python. Designed
+to be triggered on a schedule by GitHub Actions (see
 .github/workflows/check.yml, currently hourly to match "send Discord every
 1 hour"), but you can run it anywhere (a cron job, a Raspberry Pi, your own
 server) as long as the network isn't blocked.
@@ -21,6 +21,23 @@ file's sake (so logs/hpdsp_log.md can note "just opened" the first time a
 month goes live); it no longer gates what gets posted to Discord - every
 run posts the full current status for every watched month, live off the
 page, regardless of whether anything changed.
+
+2026-09-25 fetch-engine change: the first live run reported every single
+month as "not open" - including the CURRENT month, which was provably
+wrong (a direct browser check of the exact same URL showed real,
+available dates). Diagnosis (done via a browser-side `fetch()` to that
+exact URL): the calendar HTML is NOT behind a login/session/cookie - a
+fully cookie-less, referrer-less request from a real browser got the
+correct page every time. The one thing a plain `requests.get()` can't
+fake is the browser's TLS/HTTP fingerprint, and hpdsp.net is a Japanese
+hotel booking engine of a kind that commonly sits behind bot-mitigation
+(e.g. Akamai/Cloudflare-style WAFs) that silently serves a stripped/blank
+page (still HTTP 200) to non-browser clients instead of an honest block -
+which matches exactly what happened. So this script now fetches every
+page with a real, headless Chromium browser (Playwright) instead of
+`requests`, to present a genuine browser fingerprint. The HTML it gets
+back is parsed exactly the same way as before (BeautifulSoup, see
+`parse_calendar`) - only *how* the page is fetched changed.
 """
 
 import json
@@ -30,8 +47,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
+import requests  # still used for the Discord webhook POST, not for hpdsp.net
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 
 def month_range(start_year: int, start_month: int, end_year: int, end_month: int) -> list:
@@ -125,10 +143,61 @@ def build_url(target: dict, year: int, month: int) -> str:
     return f"{BASE_URL}?{query}"
 
 
+# A single headless-Chromium instance is launched once per script run (see
+# get_browser_page() / close_browser() below) and reused for every
+# target/month fetch, rather than launching a fresh browser per request -
+# that keeps the run fast even with 6+ page loads.
+_playwright_ctx = None
+_browser = None
+_page = None
+
+
+def get_browser_page():
+    global _playwright_ctx, _browser, _page
+    if _page is None:
+        _playwright_ctx = sync_playwright().start()
+        _browser = _playwright_ctx.chromium.launch(headless=True)
+        context = _browser.new_context(
+            user_agent=HEADERS["User-Agent"],
+            locale="en-US",
+        )
+        _page = context.new_page()
+    return _page
+
+
+def close_browser() -> None:
+    global _playwright_ctx, _browser, _page
+    try:
+        if _browser is not None:
+            _browser.close()
+    finally:
+        if _playwright_ctx is not None:
+            _playwright_ctx.stop()
+        _browser = _page = _playwright_ctx = None
+
+
 def fetch_month_html(target: dict, year: int, month: int) -> str:
-    resp = requests.get(build_url(target, year, month), headers=HEADERS, timeout=30)
-    resp.raise_for_status()
-    return resp.text
+    url = build_url(target, year, month)
+    page = get_browser_page()
+    page.goto(url, wait_until="load", timeout=30000)
+    text = page.content()
+
+    # Debug diagnostics: print a short summary of every fetch to the
+    # Actions run log so a future "why is this wrong" question can be
+    # answered by reading the log instead of re-diagnosing from scratch.
+    print(
+        f"[debug] {year:04d}-{month:02d}: GET {url}\n"
+        f"[debug]   -> final_url={page.url} len={len(text)} "
+        f"has_table_calender={'table_calender' in text} "
+        f"has_enable={'table_calender-enable' in text} "
+        f"has_reserved={'table_calender-reserved' in text}"
+    )
+    if "table_calender" not in text:
+        # Print a chunk of the body so we can see what we actually got
+        # (a captcha/interstitial page, an error page, a redirect target,
+        # etc.) instead of the expected calendar markup.
+        print(f"[debug]   body snippet (first 1000 chars):\n{text[:1000]}")
+    return text
 
 
 def parse_calendar(html: str, year: int, month: int) -> dict:
@@ -264,35 +333,44 @@ def main() -> int:
     just_opened = []      # for the log only - months that opened since last run
     checked_summaries = []
 
-    for target in TARGETS:
-        label = target["label"]
-        results[label] = {}
-        for year, month in TARGET_MONTHS:
-            state_key = f"{target['planCd']}|{target['roomTypeCd']}|{year:04d}-{month:02d}"
-            month_key = f"{year:04d}-{month:02d}"
-            prev = state.get(state_key, {"opened": False})
+    try:
+        for target in TARGETS:
+            label = target["label"]
+            results[label] = {}
+            for year, month in TARGET_MONTHS:
+                state_key = f"{target['planCd']}|{target['roomTypeCd']}|{year:04d}-{month:02d}"
+                month_key = f"{year:04d}-{month:02d}"
+                prev = state.get(state_key, {"opened": False})
 
-            try:
-                html = fetch_month_html(target, year, month)
-            except requests.RequestException as exc:
-                print(f"[error] fetching {label} {month_key}: {exc}")
-                # Keep last-known result in the report rather than dropping
-                # the month silently, if we have one; otherwise show closed.
-                results[label][(year, month)] = {"opened": prev["opened"], "available": []}
-                continue
+                try:
+                    html = fetch_month_html(target, year, month)
+                except Exception as exc:  # Playwright raises its own
+                    # exception types (TimeoutError, Error), not
+                    # requests.RequestException
+                    print(f"[error] fetching {label} {month_key}: {exc}")
+                    # Keep last-known result in the report rather than
+                    # dropping the month silently, if we have one;
+                    # otherwise show closed.
+                    results[label][(year, month)] = {
+                        "opened": prev["opened"],
+                        "available": [],
+                    }
+                    continue
 
-            result = parse_calendar(html, year, month)
-            results[label][(year, month)] = result
+                result = parse_calendar(html, year, month)
+                results[label][(year, month)] = result
 
-            if result["opened"] and not prev["opened"]:
-                just_opened.append(f"{label} {month_key}")
+                if result["opened"] and not prev["opened"]:
+                    just_opened.append(f"{label} {month_key}")
 
-            state[state_key] = {"opened": result["opened"], "last_checked": now}
+                state[state_key] = {"opened": result["opened"], "last_checked": now}
 
-            status = "open" if result["opened"] else "not open yet"
-            checked_summaries.append(
-                f"{label} {month_key}: {status}, {len(result['available'])} bookable date(s)"
-            )
+                status = "open" if result["opened"] else "not open yet"
+                checked_summaries.append(
+                    f"{label} {month_key}: {status}, {len(result['available'])} bookable date(s)"
+                )
+    finally:
+        close_browser()
 
     save_state(state)
 

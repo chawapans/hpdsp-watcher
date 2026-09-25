@@ -24,7 +24,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
+        run: |
+          pip install requests beautifulsoup4 playwright
+          # 2026-09-25: check_hpdsp.py now fetches pages with headless
+          # Chromium (via Playwright) instead of plain `requests`, because
+          # hpdsp.net appears to serve a stripped/empty calendar page (HTTP
+          # 200, but no data) to non-browser clients - a real browser
+          # fetching the exact same URL got the correct page every time.
+          # This installs Chromium + its OS-level deps; adds ~30-60s to
+          # each run, still comfortably inside GitHub's free Actions minutes.
+          playwright install --with-deps chromium
 
       - name: Run availability check
         env:
