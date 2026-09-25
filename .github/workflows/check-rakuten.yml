@@ -1,0 +1,46 @@
+name: Check Rakuten Travel availability
+
+on:
+  schedule:
+    # Hourly, at :30 (offset from check.yml's :00 so the two workflows'
+    # commits rarely land at the same instant). Rakuten's API is
+    # rate-limited (~1 req/sec) and the watched range runs from today
+    # through END_DATE in check_rakuten.py, so request count grows as
+    # END_DATE gets further away (~150 requests/run at a ~5-month range).
+    # Don't go more frequent than hourly without also shrinking that range.
+    - cron: "30 * * * *"
+  workflow_dispatch: {}   # lets you click "Run workflow" manually to test
+
+permissions:
+  contents: write   # needed so the workflow can commit state_rakuten.json back
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Rakuten availability check
+        env:
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python check_rakuten.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name "hpdsp-watcher-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state_rakuten.json logs/rakuten_log.md
+          git diff --quiet --cached || git commit -m "Update Rakuten availability state + log [skip ci]"
+          # The hpdsp workflow commits to the same branch on its own
+          # schedule; pull --rebase first so an overlapping run doesn't
+          # get its push rejected.
+          git pull --rebase
+          git push

@@ -1,0 +1,44 @@
+name: Check hpdsp hotel availability
+
+on:
+  schedule:
+    # Hourly, on the hour (2026-09-25: was every 15 min, changed per your
+    # request to match "check every hour, post to Discord every hour").
+    # Offset from check-rakuten.yml's :30 so the two don't usually try to
+    # commit at the exact same moment (pull --rebase below handles it
+    # either way, this just makes collisions rarer).
+    - cron: "0 * * * *"
+  workflow_dispatch: {}   # lets you click "Run workflow" manually to test
+
+permissions:
+  contents: write   # needed so the workflow can commit state.json back
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run availability check
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python check_hpdsp.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name "hpdsp-watcher-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json logs/hpdsp_log.md
+          git diff --quiet --cached || git commit -m "Update hpdsp availability state + log [skip ci]"
+          # The Rakuten workflow commits to the same branch on its own
+          # schedule; pull --rebase first so an overlapping run doesn't
+          # get its push rejected.
+          git pull --rebase
+          git push
