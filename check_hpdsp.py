@@ -200,21 +200,9 @@ def fetch_month_html(target: dict, year: int, month: int) -> str:
     return text
 
 
-def parse_calendar(html: str, year: int, month: int) -> dict:
-    """
-    Returns {
-        "opened": bool,       # is the booking window open at all for this month?
-        "available": [        # list of bookable dates found
-            {"date": "2027-02-16", "price": "24200", "remaining": "6"},
-            ...
-        ],
-    }
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    table = soup.find("table", class_="table_calender")
-    if table is None:
-        return {"opened": False, "available": []}
-
+def _parse_one_table(table, year: int, month: int) -> dict:
+    """Parse a single <table class="table_calender"> element into the same
+    {"opened", "available"} shape parse_calendar() returns."""
     any_data = False
     available = []
 
@@ -248,6 +236,52 @@ def parse_calendar(html: str, year: int, month: int) -> dict:
             )
 
     return {"opened": any_data, "available": available}
+
+
+def parse_calendar(html: str, year: int, month: int) -> dict:
+    """
+    Returns {
+        "opened": bool,       # is the booking window open at all for this month?
+        "available": [        # list of bookable dates found
+            {"date": "2027-02-16", "price": "24200", "remaining": "6"},
+            ...
+        ],
+    }
+
+    2026-09-25: the page can contain MORE THAN ONE element matching
+    `<table class="table_calender">` (a live run's debug log showed the raw
+    HTML contained real "table_calender-enable" data, yet parsing still
+    came back "not open" - the only way both are true is if the FIRST such
+    table BeautifulSoup's plain .find() picked wasn't the one with the
+    actual data, e.g. a duplicate/skeleton copy for a responsive layout
+    variant). To be robust to that, this now looks at every matching table
+    and keeps whichever one actually has real cell data, instead of
+    blindly trusting the first match.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table", class_="table_calender")
+
+    print(
+        f"[debug] {year:04d}-{month:02d}: found {len(tables)} "
+        f"<table class=\"table_calender\"> element(s) in the parsed HTML"
+    )
+
+    if not tables:
+        return {"opened": False, "available": []}
+
+    parsed = [_parse_one_table(t, year, month) for t in tables]
+    for i, p in enumerate(parsed):
+        print(
+            f"[debug]   table[{i}]: opened={p['opened']} "
+            f"available_count={len(p['available'])}"
+        )
+
+    # Prefer a table that actually has data (opened=True) over an empty
+    # duplicate; among opened ones, prefer the one with the most bookable
+    # dates (most information). Falls back to the first table if none of
+    # them show any data at all (genuinely not open).
+    best = max(parsed, key=lambda p: (p["opened"], len(p["available"])))
+    return best
 
 
 def load_state() -> dict:
