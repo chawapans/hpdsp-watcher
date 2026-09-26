@@ -401,18 +401,89 @@ def log_history_csv(checked_at: str, target_label: str, day_entries: list) -> No
 TARGETS_BY_LABEL = {t["label"]: t for t in TARGETS}
 
 
-def format_report(results: dict, checked_at: str) -> str:
+def _sum_remaining(available: list) -> int:
+    """Adds up the "remaining" room counts across a list of available-date
+    entries, skipping any that aren't a clean integer (defensive - the
+    scraped value should always be digits, but never crash the report over
+    one odd cell)."""
+    total = 0
+    for a in available:
+        try:
+            total += int(a["remaining"])
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def compute_month_diff(prev_available: dict, current_available: list) -> dict:
+    """Compares this run's available-date list for one month against the
+    PREVIOUS run's (prev_available: {date: remaining} from state.json), and
+    returns {"gone": [(date, prev_remaining)], "decreased": [(date, prev, cur)],
+    "increased": [(date, prev, cur)], "new": [(date, remaining)]} - added
+    2026-09-25 per your request to see "which dates disappeared or lost
+    rooms" compared to the last check, not just the current snapshot."""
+    current_map = {a["date"]: a["remaining"] for a in current_available}
+    diff = {"gone": [], "decreased": [], "increased": [], "new": []}
+
+    for date, prev_remaining in prev_available.items():
+        if date not in current_map:
+            diff["gone"].append((date, prev_remaining))
+            continue
+        cur_remaining = current_map[date]
+        try:
+            prev_n, cur_n = int(prev_remaining), int(cur_remaining)
+        except (TypeError, ValueError):
+            continue
+        if cur_n < prev_n:
+            diff["decreased"].append((date, prev_remaining, cur_remaining))
+        elif cur_n > prev_n:
+            diff["increased"].append((date, prev_remaining, cur_remaining))
+
+    for date, remaining in current_map.items():
+        if date not in prev_available:
+            diff["new"].append((date, remaining))
+
+    return diff
+
+
+def _format_diff_lines(month_diffs: dict) -> list:
+    """month_diffs: {(year, month): diff_dict from compute_month_diff}.
+    Renders every change across all watched months into one flat, sorted
+    (by date) list of report lines."""
+    lines = []
+    for _, diff in sorted(month_diffs.items()):
+        for date, prev_remaining in sorted(diff.get("gone", [])):
+            lines.append(f"{date}: หายไป (เคยว่าง {prev_remaining} ห้อง)")
+        for date, prev_r, cur_r in sorted(diff.get("decreased", [])):
+            lines.append(f"{date}: ว่างลดลง {prev_r} → {cur_r} ห้อง")
+        for date, prev_r, cur_r in sorted(diff.get("increased", [])):
+            lines.append(f"{date}: ว่างเพิ่มขึ้น {prev_r} → {cur_r} ห้อง")
+        for date, remaining in sorted(diff.get("new", [])):
+            lines.append(f"{date}: ว่างใหม่ {remaining} ห้อง 🎉")
+    return lines
+
+
+def format_report(results: dict, checked_at: str, diffs: dict = None) -> str:
     """
     results: {label: {(year, month): {"opened": bool, "available": [...]}}}
+    diffs: {label: {(year, month): diff_dict}} - only months where
+        something actually changed since last run are present here (see
+        compute_month_diff / main()); omitted or None means "no diff data
+        yet" (e.g. the very first run after this feature was added).
 
     Builds the Thai month-by-month report you asked for, e.g.:
 
         *** hpdsp (25/09/26 15:08:32) ***
         Book: https://www.hpdsp.net/tominoko/en/hw/hwp3200/hww3101init.do?...
 
+        เปลี่ยนแปลงจากรอบก่อน:
+        2026-10-05: หายไป (เคยว่าง 1 ห้อง)
+        2026-10-12: ว่างลดลง 2 → 1 ห้อง
+
         September 2026
         วันที่ 16 ว่าง 6 ห้อง
         วันที่ 27 ว่าง 2 ห้อง
+        รวมทั้งหมด 8 ห้อง
 
         October 2026
 
@@ -424,7 +495,12 @@ def format_report(results: dict, checked_at: str) -> str:
     under each target's header. Also added the "(DD/MM/YY HH:MM:SS)"
     timestamp in the header, in Thailand time, so you can tell at a glance
     when a given Discord message was actually checked - both per your
-    request.
+    request. Also added (same day, later request): a "รวมทั้งหมด N ห้อง"
+    total line under each month's date list, and a "เปลี่ยนแปลงจากรอบก่อน"
+    section listing which dates disappeared, lost rooms, gained rooms, or
+    became newly available since the last run - omitted entirely for a
+    month/target with no changes, and omitted for the whole report if
+    nothing changed anywhere.
     """
     multi_target = len(results) > 1
     lines = [f"*** hpdsp ({checked_at}) ***"]
@@ -435,6 +511,12 @@ def format_report(results: dict, checked_at: str) -> str:
         target = TARGETS_BY_LABEL.get(label)
         if target:
             lines.append(f"Book: {build_booking_url(target)}")
+
+        diff_lines = _format_diff_lines((diffs or {}).get(label, {}))
+        if diff_lines:
+            lines.append("\nเปลี่ยนแปลงจากรอบก่อน:")
+            lines.extend(diff_lines)
+
         for (year, month), result in months.items():
             month_name = datetime(year, month, 1).strftime("%B %Y")
             lines.append(f"\n{month_name}")
@@ -447,6 +529,8 @@ def format_report(results: dict, checked_at: str) -> str:
                     lines.append(f"วันที่ {day} ว่าง {remaining} ห้อง")
                 # opened but nothing in "available" = fully booked -> left
                 # blank under the month header, same as your example.
+                if result["available"]:
+                    lines.append(f"รวมทั้งหมด {_sum_remaining(result['available'])} ห้อง")
 
     return "\n".join(lines)
 
@@ -470,6 +554,7 @@ def main() -> int:
     now = datetime.now(timezone.utc).isoformat()
     checked_at = datetime.now(BANGKOK_TZ).strftime("%d/%m/%y %H:%M:%S")
     results = {}          # label -> {(year, month): {"opened", "available", "all_days"}}
+    diffs = {}             # label -> {(year, month): diff_dict} - only months that changed
     just_opened = []      # for the log only - months that opened since last run
     checked_summaries = []
 
@@ -481,6 +566,12 @@ def main() -> int:
                 state_key = f"{target['planCd']}|{target['roomTypeCd']}|{year:04d}-{month:02d}"
                 month_key = f"{year:04d}-{month:02d}"
                 prev = state.get(state_key, {"opened": False})
+                # "available" only exists in state.json from this feature
+                # onward (2026-09-25) - None here means "no diff data yet"
+                # (either the very first run ever, or the first run after
+                # upgrading to this version), so the diff is skipped for
+                # that month rather than showing everything as "new".
+                prev_available = prev.get("available")
 
                 try:
                     html = fetch_month_html(target, year, month)
@@ -502,10 +593,19 @@ def main() -> int:
                 results[label][(year, month)] = result
                 log_history_csv(checked_at, label, result["all_days"])
 
+                if prev_available is not None:
+                    month_diff = compute_month_diff(prev_available, result["available"])
+                    if any(month_diff.values()):
+                        diffs.setdefault(label, {})[(year, month)] = month_diff
+
                 if result["opened"] and not prev["opened"]:
                     just_opened.append(f"{label} {month_key}")
 
-                state[state_key] = {"opened": result["opened"], "last_checked": now}
+                state[state_key] = {
+                    "opened": result["opened"],
+                    "last_checked": now,
+                    "available": {a["date"]: a["remaining"] for a in result["available"]},
+                }
 
                 status = "open" if result["opened"] else "not open yet"
                 checked_summaries.append(
@@ -516,7 +616,7 @@ def main() -> int:
 
     save_state(state)
 
-    report = format_report(results, checked_at)
+    report = format_report(results, checked_at, diffs)
 
     # Log a heartbeat every run (proof it ran + what it saw), plus a
     # separate note whenever a month transitions from closed to open.
