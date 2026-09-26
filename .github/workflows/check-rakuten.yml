@@ -1,15 +1,18 @@
 name: Check Rakuten Travel availability
 
 on:
-  schedule:
-    # Hourly, at :30 (offset from check.yml's :00 so the two workflows'
-    # commits rarely land at the same instant). Rakuten's API is
-    # rate-limited (~1 req/sec) and the watched range runs from today
-    # through END_DATE in check_rakuten.py, so request count grows as
-    # END_DATE gets further away (~150 requests/run at a ~5-month range).
-    # Don't go more frequent than hourly without also shrinking that range.
-    - cron: "30 * * * *"
-  workflow_dispatch: {}   # lets you click "Run workflow" manually to test
+  # 2026-09-25: no native `schedule:` trigger here - see check.yml's
+  # comment for the full story (GitHub's own cron scheduler turned out to
+  # be broken platform-wide around this time, firing hours late and
+  # unpredictably, or not at all). Trigger this hourly with an external
+  # cron service (cron-job.org) calling this workflow's `workflow_dispatch`
+  # REST endpoint instead - same approach as check.yml, offset by ~30 min
+  # so the two workflows' commits rarely land at the same instant. Rakuten's
+  # API is rate-limited (~1 req/sec) and the watched range runs from today
+  # through END_DATE in check_rakuten.py, so request count grows as
+  # END_DATE gets further away (~150 requests/run at a ~5-month range) -
+  # don't go more frequent than hourly without also shrinking that range.
+  workflow_dispatch: {}
 
 permissions:
   contents: write   # needed so the workflow can commit state_rakuten.json back
