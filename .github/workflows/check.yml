@@ -1,14 +1,21 @@
 name: Check hpdsp hotel availability
 
 on:
-  schedule:
-    # Hourly, on the hour (2026-09-25: was every 15 min, changed per your
-    # request to match "check every hour, post to Discord every hour").
-    # Offset from check-rakuten.yml's :30 so the two don't usually try to
-    # commit at the exact same moment (pull --rebase below handles it
-    # either way, this just makes collisions rarer).
-    - cron: "0 * * * *"
-  workflow_dispatch: {}   # lets you click "Run workflow" manually to test
+  # 2026-09-25: the native `schedule:` trigger used to live here (tried
+  # ":00" hourly, then moved to ":10" to dodge GitHub's busiest scheduling
+  # moment) but it turned out GitHub's own cron scheduler was broken
+  # platform-wide around this time (many other users hit the exact same
+  # thing - see README's troubleshooting note) - it would go hours without
+  # firing at all, then unpredictably fire once with a multi-hour delay.
+  # Replaced it with an external cron service (cron-job.org) calling this
+  # workflow's `workflow_dispatch` REST endpoint on a schedule instead,
+  # which actually fires reliably. Removed the `schedule:` block entirely
+  # (rather than leaving it alongside the external one) because the two
+  # together caused duplicate Discord posts - GitHub's scheduler would
+  # eventually fire on its own, unpredictably, on top of the external
+  # trigger. workflow_dispatch below is what both the external cron
+  # service AND your own manual "Run workflow" clicks use.
+  workflow_dispatch: {}
 
 permissions:
   contents: write   # needed so the workflow can commit state.json back
