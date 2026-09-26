@@ -415,6 +415,17 @@ def _sum_remaining(available: list) -> int:
     return total
 
 
+def _format_price(price_digits: str) -> str:
+    """Formats a scraped price string (digits only, e.g. "24200") as
+    "¥24,200" with thousands separators. Returns "?" if the value is
+    missing or not a clean number, so a report line never crashes over
+    one odd cell - same defensive style as _sum_remaining."""
+    try:
+        return f"¥{int(price_digits):,}"
+    except (TypeError, ValueError):
+        return "?"
+
+
 def compute_month_diff(prev_available: dict, current_available: list) -> dict:
     """Compares this run's available-date list for one month against the
     PREVIOUS run's (prev_available: {date: remaining} from state.json), and
@@ -481,14 +492,21 @@ def format_report(results: dict, checked_at: str, diffs: dict = None) -> str:
         2026-10-12: ว่างลดลง 2 → 1 ห้อง
 
         September 2026
-        วันที่ 16 ว่าง 6 ห้อง
-        วันที่ 27 ว่าง 2 ห้อง
+        วันที่ 16 ว่าง 6 ห้อง (¥24,200)
+        วันที่ 27 ว่าง 2 ห้อง (¥26,800)
         รวมทั้งหมด 8 ห้อง
 
         October 2026
 
         January 2027
         -- ยังไม่เปิดจอง --
+
+    2026-09-26: added the "(¥N,NNN)" price shown after each date's room
+    count - per-day price on this hotel's calendar varies (e.g. weekday vs
+    weekend), so this is scraped live per date, same as "remaining", never
+    a single fixed price for the whole month. Shows "(?)" instead if a
+    date's price couldn't be read cleanly, same defensive style as an
+    unreadable "remaining" count.
 
     2026-09-25: added the "Book:" link (English-language plan page for the
     exact room, so a click goes straight to actually reserving it) right
@@ -526,7 +544,8 @@ def format_report(results: dict, checked_at: str, diffs: dict = None) -> str:
                 for a in sorted(result["available"], key=lambda x: x["date"]):
                     day = int(a["date"].split("-")[2])
                     remaining = a["remaining"] or "?"
-                    lines.append(f"วันที่ {day} ว่าง {remaining} ห้อง")
+                    price = _format_price(a["price"])
+                    lines.append(f"วันที่ {day} ว่าง {remaining} ห้อง ({price})")
                 # opened but nothing in "available" = fully booked -> left
                 # blank under the month header, same as your example.
                 if result["available"]:
