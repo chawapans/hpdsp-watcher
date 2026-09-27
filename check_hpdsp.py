@@ -632,18 +632,27 @@ def main() -> int:
                 # for this one request (see the 2026-09-25 fetch-engine
                 # note above - Playwright fixed this MOSTLY, not 100% of
                 # the time). So: if a month that was previously confirmed
-                # open with real dates suddenly parses as closed/empty,
-                # don't trust it on the first read - retry the fetch once,
-                # and if it's STILL empty, treat this as a bad fetch rather
-                # than a genuine mass sellout: keep last-known data for the
-                # report/diff and skip touching state.json for this month,
-                # so one bad page load can neither wipe out real
-                # availability data nor trigger a false "หายไป" flood.
-                if not result["opened"] and prev["opened"] and prev_available:
+                # open suddenly parses as closed/empty, don't trust it on
+                # the first read - retry the fetch once, and if it's STILL
+                # empty, treat this as a bad fetch rather than a genuine
+                # closure: keep last-known data for the report/diff and
+                # skip touching state.json for this month, so one bad page
+                # load can neither wipe out real availability data nor
+                # trigger a false "หายไป"/"ยังไม่เปิดจอง" flood.
+                #
+                # NOTE: this must trigger on `prev["opened"]` alone, NOT on
+                # `prev_available` being truthy - a month that's open but
+                # fully booked has prev_available == {} (empty dict, which
+                # is falsy!), so requiring it to be truthy silently skipped
+                # this protection for exactly those months (caught live:
+                # November/December showed "ยังไม่เปิดจอง" after being
+                # open-but-booked-out on every prior run - a booking window
+                # doesn't un-open once live, so that was this same bug).
+                if not result["opened"] and prev["opened"]:
                     print(
                         f"[warn] {label} {month_key}: looked closed/empty after "
-                        f"previously being open with {len(prev_available)} date(s) - "
-                        f"retrying fetch once before trusting it"
+                        f"previously being open ({len(prev_available or {})} date(s) "
+                        f"last seen available) - retrying fetch once before trusting it"
                     )
                     try:
                         retry_html = fetch_month_html(target, year, month)
@@ -657,13 +666,13 @@ def main() -> int:
                         print(
                             f"[warn] {label} {month_key}: still closed/empty after "
                             f"retry - treating as a bad fetch, keeping last-known "
-                            f"data instead of reporting a mass sellout"
+                            f"data instead of reporting a false closure"
                         )
                         results[label][(year, month)] = {
                             "opened": prev["opened"],
                             "available": [
                                 {"date": d, "price": "", "remaining": r}
-                                for d, r in prev_available.items()
+                                for d, r in (prev_available or {}).items()
                             ],
                             "all_days": [],
                         }
