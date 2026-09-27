@@ -6,21 +6,25 @@ hpdsp-watcher
 Checks a hpdsp.net hotel-plan booking calendar (Tominoko Hotel, or any hotel
 running the same "hpdsp" reservation engine) across one or more room/plan
 types and one or more target months, and posts a full month-by-month status
-report to Discord every run (2026-09-25 change, per your request - this is
-no longer diff/event-based; every run posts the complete current picture,
-whether or not anything changed since last time).
+report to Discord every run, whether or not anything changed since last
+time - every message is self-contained, so you can open Discord any time
+and see the full current picture, never just "what changed since a message
+you might have missed". (Briefly, for part of 2026-09-27, this switched to
+only posting when something changed - reverted the same day per your
+follow-up: a change-only message you don't happen to be free to read right
+then is easy to miss entirely, with nothing before or after it in the
+channel to tell you what you missed.)
 
 Runs standalone (no Claude, no desktop app needed) - just Python. Designed
 to be triggered on a schedule by GitHub Actions (see
-.github/workflows/check.yml, currently hourly to match "send Discord every
-1 hour"), but you can run it anywhere (a cron job, a Raspberry Pi, your own
+.github/workflows/check.yml, currently hourly to match "check every 1
+hour"), but you can run it anywhere (a cron job, a Raspberry Pi, your own
 server) as long as the network isn't blocked.
 
-state.json still tracks per-month "opened" history purely for the log
-file's sake (so logs/hpdsp_log.md can note "just opened" the first time a
-month goes live); it no longer gates what gets posted to Discord - every
-run posts the full current status for every watched month, live off the
-page, regardless of whether anything changed.
+state.json tracks per-month "opened" history and each date's last-seen
+room count, purely so `compute_month_diff` can show a "เปลี่ยนแปลงจากรอบก่อน"
+section when something changed - it no longer gates whether a message gets
+posted at all; every run posts, changed or not.
 
 2026-09-25 fetch-engine change: the first live run reported every single
 month as "not open" - including the CURRENT month, which was provably
@@ -642,9 +646,22 @@ def main() -> int:
     log_line(f"checked {len(checked_summaries)} target/month combo(s): " + "; ".join(checked_summaries))
     for opened in just_opened:
         log_line(f"📅 booking window just opened: {opened}")
-    log_line("posted report:\n" + report)
 
+    # 2026-09-27: briefly tried posting to Discord only on a run where
+    # something changed (see git history / README), but reverted the same
+    # day per your follow-up request - if a change-only message arrives
+    # while you don't happen to be free to check Discord right then, you'd
+    # have no way to tell (nothing before or after it to compare against)
+    # and could miss it entirely. Posting every hour unconditionally again
+    # means every message is self-contained - you can open Discord any time
+    # and see the full current picture, not just "what changed since a
+    # message you may have missed". `diffs`/`just_opened` are still
+    # computed and still shown (the "เปลี่ยนแปลงจากรอบก่อน" section) when
+    # there IS a change - they just no longer gate whether a message gets
+    # sent at all.
+    log_line("posted report:\n" + report)
     notify_discord(report)
+
     print(report)
 
     return 0
