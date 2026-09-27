@@ -4828,3 +4828,7 @@ checked_at,target_label,date,status,price,remaining
 27/09/26 12:01:46,Room (planCd 00423872 / roomTypeCd 0099552),2026-12-29,sold_out,39600,0
 27/09/26 12:01:46,Room (planCd 00423872 / roomTypeCd 0099552),2026-12-30,sold_out,39600,0
 27/09/26 12:01:46,Room (planCd 00423872 / roomTypeCd 0099552),2026-12-31,sold_out,46200,0
+27/09/26 13:01:32,Room (planCd 00423872 / roomTypeCd 0099552),2026-09-27,sold_out,30800,0
+27/09/26 13:01:32,Room (planCd 00423872 / roomTypeCd 0099552),2026-09-28,sold_out,30800,0
+27/09/26 13:01:32,Room (planCd 00423872 / roomTypeCd 0099552),2026-09-29,sold_out,30800,0
+27/09/26 13:01:32,Room (planCd 00423872 / roomTypeCd 0099552),2026-09-30,sold_out,30800,0
