@@ -602,17 +602,76 @@ def main() -> int:
                     # exception types (TimeoutError, Error), not
                     # requests.RequestException
                     print(f"[error] fetching {label} {month_key}: {exc}")
-                    # Keep last-known result in the report rather than
-                    # dropping the month silently, if we have one;
-                    # otherwise show closed.
+                    # Keep last-known data in the report rather than
+                    # dropping the month silently or showing it as
+                    # emptied/closed - rebuild "available" from
+                    # state.json's last snapshot (2026-09-27 fix; used to
+                    # leave this as an empty list, which made a month that
+                    # was previously full of bookable dates render as
+                    # blank/"fully booked" after a single fetch error).
                     results[label][(year, month)] = {
                         "opened": prev["opened"],
-                        "available": [],
+                        "available": [
+                            {"date": d, "price": "", "remaining": r}
+                            for d, r in (prev_available or {}).items()
+                        ],
                         "all_days": [],
                     }
+                    checked_summaries.append(f"{label} {month_key}: fetch error, kept last-known data")
                     continue
 
                 result = parse_calendar(html, year, month)
+
+                # 2026-09-27 fix: a live run showed EVERY previously-open
+                # date in a month (7 dates, 10 rooms total) as "gone" in
+                # one hour, with the month itself flipping to "not open
+                # yet" - a hotel selling out 7 different dates simultaneously
+                # within an hour, right after the booking window itself
+                # supposedly closed, is not remotely plausible. Far more
+                # likely: hpdsp.net served its stripped/bot-blocked page
+                # for this one request (see the 2026-09-25 fetch-engine
+                # note above - Playwright fixed this MOSTLY, not 100% of
+                # the time). So: if a month that was previously confirmed
+                # open with real dates suddenly parses as closed/empty,
+                # don't trust it on the first read - retry the fetch once,
+                # and if it's STILL empty, treat this as a bad fetch rather
+                # than a genuine mass sellout: keep last-known data for the
+                # report/diff and skip touching state.json for this month,
+                # so one bad page load can neither wipe out real
+                # availability data nor trigger a false "หายไป" flood.
+                if not result["opened"] and prev["opened"] and prev_available:
+                    print(
+                        f"[warn] {label} {month_key}: looked closed/empty after "
+                        f"previously being open with {len(prev_available)} date(s) - "
+                        f"retrying fetch once before trusting it"
+                    )
+                    try:
+                        retry_html = fetch_month_html(target, year, month)
+                        retry_result = parse_calendar(retry_html, year, month)
+                    except Exception as exc:
+                        print(f"[warn] retry fetch also failed: {exc}")
+                        retry_result = result
+                    if retry_result["opened"]:
+                        result = retry_result
+                    else:
+                        print(
+                            f"[warn] {label} {month_key}: still closed/empty after "
+                            f"retry - treating as a bad fetch, keeping last-known "
+                            f"data instead of reporting a mass sellout"
+                        )
+                        results[label][(year, month)] = {
+                            "opened": prev["opened"],
+                            "available": [
+                                {"date": d, "price": "", "remaining": r}
+                                for d, r in prev_available.items()
+                            ],
+                            "all_days": [],
+                        }
+                        checked_summaries.append(
+                            f"{label} {month_key}: looked closed twice, kept last-known data"
+                        )
+                        continue
+
                 results[label][(year, month)] = result
                 log_history_csv(checked_at, label, result["all_days"])
 
