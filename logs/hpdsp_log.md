@@ -20544,3 +20544,17 @@ January 2027
 
 February 2027
 -- ยังไม่เปิดจอง --
+- `2026-11-10 03:02 UTC` checked 4 target/month combo(s): Room (planCd 00423872 / roomTypeCd 0099552) 2026-11: looked closed twice, kept last-known data; Room (planCd 00423872 / roomTypeCd 0099552) 2026-12: looked closed twice, kept last-known data; Room (planCd 00423872 / roomTypeCd 0099552) 2027-01: not open yet, 0 bookable date(s); Room (planCd 00423872 / roomTypeCd 0099552) 2027-02: not open yet, 0 bookable date(s)
+- `2026-11-10 03:02 UTC` posted report:
+*** hpdsp (10/11/26 10:01:58) ***
+Book: https://www.hpdsp.net/tominoko/en/hw/hwp3200/hww3101init.do?stayYear=&stayMonth=&stayDay=&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&yadNo=310563&screenId=HWW3101&planListNumPlan=5_2_0&planCd=00423872&roomTypeCd=0099552
+
+November 2026
+
+December 2026
+
+January 2027
+-- ยังไม่เปิดจอง --
+
+February 2027
+-- ยังไม่เปิดจอง --
