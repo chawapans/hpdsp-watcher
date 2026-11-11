@@ -40,7 +40,7 @@ jobs:
           # fetching the exact same URL got the correct page every time.
           # This installs Chromium + its OS-level deps; adds ~30-60s to
           # each run, still comfortably inside GitHub's free Actions minutes.
-          playwright install --with-deps chromium
+          playwright install
 
       - name: Run availability check
         env:
