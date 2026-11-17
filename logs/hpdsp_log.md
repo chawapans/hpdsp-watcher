@@ -23338,3 +23338,32 @@ January 2027
 
 February 2027
 -- ยังไม่เปิดจอง --
+- `2026-11-17 07:01 UTC` checked 4 target/month combo(s): Room (planCd 00423872 / roomTypeCd 0099552) 2026-11: open, 0 bookable date(s); Room (planCd 00423872 / roomTypeCd 0099552) 2026-12: open, 14 bookable date(s); Room (planCd 00423872 / roomTypeCd 0099552) 2027-01: not open yet, 0 bookable date(s); Room (planCd 00423872 / roomTypeCd 0099552) 2027-02: not open yet, 0 bookable date(s)
+- `2026-11-17 07:01 UTC` posted report:
+*** hpdsp (17/11/26 14:01:30) ***
+Book: https://www.hpdsp.net/tominoko/en/hw/hwp3200/hww3101init.do?stayYear=&stayMonth=&stayDay=&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&yadNo=310563&screenId=HWW3101&planListNumPlan=5_2_0&planCd=00423872&roomTypeCd=0099552
+
+November 2026
+
+December 2026
+วันที่ 1 ว่าง 1 ห้อง (¥30,800)
+วันที่ 2 ว่าง 1 ห้อง (¥30,800)
+วันที่ 3 ว่าง 1 ห้อง (¥30,800)
+วันที่ 5 ว่าง 1 ห้อง (¥35,200)
+วันที่ 6 ว่าง 2 ห้อง (¥30,800)
+วันที่ 8 ว่าง 1 ห้อง (¥30,800)
+วันที่ 9 ว่าง 2 ห้อง (¥30,800)
+วันที่ 11 ว่าง 2 ห้อง (¥30,800)
+วันที่ 14 ว่าง 1 ห้อง (¥30,800)
+วันที่ 21 ว่าง 1 ห้อง (¥30,800)
+วันที่ 22 ว่าง 2 ห้อง (¥30,800)
+วันที่ 23 ว่าง 2 ห้อง (¥30,800)
+วันที่ 24 ว่าง 1 ห้อง (¥30,800)
+วันที่ 25 ว่าง 1 ห้อง (¥30,800)
+รวมทั้งหมด 19 ห้อง
+
+January 2027
+-- ยังไม่เปิดจอง --
+
+February 2027
+-- ยังไม่เปิดจอง --
